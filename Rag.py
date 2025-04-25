@@ -1,66 +1,54 @@
 import pandas as pd
 
-# Step 1: Load the Excel files
-dimensioning_df = pd.read_excel('dimensioning_flavour_sheet.xlsx')
-pod_df = pd.read_excel('pod_flavour_sheet.xlsx')
+# Load the Dimensioning Flavour and POD Flavour sheets
+dimensioning_flavour_df = pd.read_excel('dimensioning_flavour_sheet.xlsx')
+pod_flavour_df = pd.read_excel('pod_flavour_sheet.xlsx')
 
-# Step 2: Clean column names (optional but recommended)
-dimensioning_df.columns = dimensioning_df.columns.str.strip().str.lower().str.replace('-', '_')
-pod_df.columns = pod_df.columns.str.strip().str.lower().str.replace('(', '').str.replace(')', '').str.replace(' ', '_')
-
-# Step 3: Initialize doclist
+# Initialize an empty list to store the doclist
 doclist = []
 
-# Step 4: Group dimensioning data
-grouped = dimensioning_df.groupby(['operator', 'network_function', 'dimensioning_flavour'])
+# Iterate over each unique combination of Operator, Network Function, and Dimensioning Flavour
+for idx, row in dimensioning_flavour_df.iterrows():
+    operator = row['Operator']
+    network_function = row['Network Function']
+    dimensioning_flavour = row['Dimensioning-flavour']
+    package = row['package']
 
-for (operator, nf, flavour), group in grouped:
-    entry = group.iloc[0]
-    package = entry['package']
+    # Filter POD Flavour sheet to match the current Dimensioning Flavour (e.g., 'mediumtddregular')
+    pod_types = ['dpp', 'dip', 'dmp', 'cmp', 'pmp', 'rmp', 'ipp']
+    pod_flavours_for_flavour = pod_flavour_df[pod_flavour_df['Pod type'].isin(pod_types)]
 
-    # Extract dimensioning resources
-    resource_fields = ['dpp', 'dip', 'dmp', 'cmp', 'pmp', 'rmp', 'ipp']
-    resource_config = "\n".join([f"- {field.upper()}: {entry[field]}" for field in resource_fields if field in entry])
+    # Initialize the document
+    doc = f"Operator: {operator}\nNetwork Function: {network_function}\nDimensioning Flavour: {dimensioning_flavour}\nPackage: {package}\n\nPod Types and their Resource Requirements:\n"
+    
+    # Add pod flavour details
+    for pod_type in pod_types:
+        pod_flavour_row = pod_flavours_for_flavour[pod_flavours_for_flavour['Pod type'] == pod_type]
+        if not pod_flavour_row.empty:
+            pod_flavour = pod_flavour_row.iloc[0]['Pod flavour']
+            vcpu_request = pod_flavour_row.iloc[0]['vcpurequest(vCore)']
+            vcpu_limit = pod_flavour_row.iloc[0]['vcpulimit(vCore)']
+            vmemory = pod_flavour_row.iloc[0]['vmemory(GB)']
+            hugepage = pod_flavour_row.iloc[0]['hugepage(GB)']
+            persistent_volume = pod_flavour_row.iloc[0]['persistentvolume(GB)']
+            package_pod = pod_flavour_row.iloc[0]['package']
+            
+            # Append pod information to doc
+            doc += f"- Pod Type: {pod_type}\n"
+            doc += f"  Pod Flavour: {pod_flavour}\n"
+            doc += f"  vCPU Request (vCore): {vcpu_request}\n"
+            doc += f"  vCPU Limit (vCore): {vcpu_limit}\n"
+            doc += f"  vMemory (GB): {vmemory}\n"
+            doc += f"  Hugepage (GB): {hugepage}\n"
+            doc += f"  Persistent Volume (GB): {persistent_volume}\n"
+            doc += f"  Package: {package_pod}\n\n"
 
-    # Step 5: Match PODs using the package
-    matching_pods = pod_df[pod_df['package'] == package]
+    # Append the document to the doclist
+    doclist.append(doc)
 
-    # Format associated PODs
-    pod_entries = []
-    for _, pod in matching_pods.iterrows():
-        pod_text = f"""\
-POD Type: {pod['pod_type']}
-Pod Flavour: {pod['pod_flavour']}
-vCPU Request: {pod['vcpurequest']}
-vCPU Limit: {pod['vcpulimit']}
-Memory: {pod['vmemory']} GB
-HugePage: {pod['hugepage']} GB
-PersistentVolume: {pod['persistentvolume']} GB
-"""
-        pod_entries.append(pod_text.strip())
-
-    pod_section = "\n\n".join(pod_entries) if pod_entries else "No associated PODs found."
-
-    # Step 6: Create final document text
-    doc_text = f"""\
-Operator: {operator}
-Network Function: {nf}
-Dimensioning Flavour: {flavour}
-Package: {package}
-
-Resource Config:
-{resource_config}
-
-Associated POD Flavours:
-{pod_section}
-"""
-
-    doclist.append(doc_text.strip())
-
-# Step 7: Save to a .txt file or print
-with open("doclist.txt", "w") as f:
+# Save the doclist to a text file
+with open('doclist.txt', 'w') as f:
     for doc in doclist:
-        f.write(doc + "\n" + "="*80 + "\n")
+        f.write(doc + "\n\n" + "="*80 + "\n\n")
 
-# Optionally: Return doclist as a list of strings for embedding
-# You can now pass `doclist` to an embedding pipeline like OpenAI, BGE, etc.
+print("Doclist generation completed and saved to 'doclist.txt'.")
