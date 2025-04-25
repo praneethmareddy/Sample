@@ -1,82 +1,66 @@
 import pandas as pd
-import os
-import json
 
-# Load Excel files
-dimensioning_df = pd.read_excel("dimensioning_flavour_sheet.xlsx")
-pod_df = pd.read_excel("pod_flavour_sheet.xlsx")
+# Step 1: Load the Excel files
+dimensioning_df = pd.read_excel('dimensioning_flavour_sheet.xlsx')
+pod_df = pd.read_excel('pod_flavour_sheet.xlsx')
 
-# Normalize column names (optional, just in case)
-dimensioning_df.columns = dimensioning_df.columns.str.strip().str.lower()
-pod_df.columns = pod_df.columns.str.strip().str.lower()
+# Step 2: Clean column names (optional but recommended)
+dimensioning_df.columns = dimensioning_df.columns.str.strip().str.lower().str.replace('-', '_')
+pod_df.columns = pod_df.columns.str.strip().str.lower().str.replace('(', '').str.replace(')', '').str.replace(' ', '_')
 
-# Create output folder
-output_dir = "rag_doclist"
-os.makedirs(output_dir, exist_ok=True)
-
+# Step 3: Initialize doclist
 doclist = []
 
-# Loop over each row in dimensioning sheet
-for _, dim_row in dimensioning_df.iterrows():
-    operator = dim_row["operator"]
-    network_function = dim_row["network function"]
-    package = dim_row["dimensioning-flavour package"]
+# Step 4: Group dimensioning data
+grouped = dimensioning_df.groupby(['operator', 'network_function', 'dimensioning_flavour'])
 
-    # Filter relevant PODs for this package
-    related_pods = pod_df[pod_df["package"] == package]
+for (operator, nf, flavour), group in grouped:
+    entry = group.iloc[0]
+    package = entry['package']
 
-    # Build dimensioning section
-    dim_section = "\n".join([
-        f"- DPP: {dim_row['dpp']}",
-        f"- DIP: {dim_row['dip']}",
-        f"- DMP: {dim_row['dmp']}",
-        f"- CMP: {dim_row['cmp']}",
-        f"- PMP: {dim_row['pmp']}",
-        f"- RMP: {dim_row['rmp']}",
-        f"- IPP: {dim_row['ipp']}",
-    ])
+    # Extract dimensioning resources
+    resource_fields = ['dpp', 'dip', 'dmp', 'cmp', 'pmp', 'rmp', 'ipp']
+    resource_config = "\n".join([f"- {field.upper()}: {entry[field]}" for field in resource_fields if field in entry])
 
-    # Build POD section
-    pod_section = ""
-    for idx, pod in related_pods.iterrows():
-        pod_section += f"""
-{idx+1}. Type: {pod['pod type']}
-   vCPU Request: {pod['vcpurequest(vcore)']}
-   vCPU Limit: {pod['vcpulimit(vcore)']}
-   Memory: {pod['vmemory(gb)']} GB
-   HugePage: {pod['hugepage(gb)']} GB
-   Persistent Volume: {pod['persistentvolume(gb)']} GB
+    # Step 5: Match PODs using the package
+    matching_pods = pod_df[pod_df['package'] == package]
+
+    # Format associated PODs
+    pod_entries = []
+    for _, pod in matching_pods.iterrows():
+        pod_text = f"""\
+POD Type: {pod['pod_type']}
+Pod Flavour: {pod['pod_flavour']}
+vCPU Request: {pod['vcpurequest']}
+vCPU Limit: {pod['vcpulimit']}
+Memory: {pod['vmemory']} GB
+HugePage: {pod['hugepage']} GB
+PersistentVolume: {pod['persistentvolume']} GB
+"""
+        pod_entries.append(pod_text.strip())
+
+    pod_section = "\n\n".join(pod_entries) if pod_entries else "No associated PODs found."
+
+    # Step 6: Create final document text
+    doc_text = f"""\
+Operator: {operator}
+Network Function: {nf}
+Dimensioning Flavour: {flavour}
+Package: {package}
+
+Resource Config:
+{resource_config}
+
+Associated POD Flavours:
+{pod_section}
 """
 
-    # Final doc string
-    doc = f"""Operator: {operator}
-Network Function: {network_function}
-Package/Flavour: {package}
+    doclist.append(doc_text.strip())
 
-Dimensioning Components:
-{dim_section}
+# Step 7: Save to a .txt file or print
+with open("doclist.txt", "w") as f:
+    for doc in doclist:
+        f.write(doc + "\n" + "="*80 + "\n")
 
-Associated PODs:{pod_section if pod_section else " None"}
-"""
-
-    # Save as text file (optional)
-    filename = f"{operator}_{network_function}_{package}.txt".replace(" ", "_").lower()
-    filepath = os.path.join(output_dir, filename)
-    with open(filepath, "w") as f:
-        f.write(doc)
-
-    # Add to doclist for embedding
-    doclist.append({
-        "content": doc,
-        "metadata": {
-            "operator": operator,
-            "network_function": network_function,
-            "package": package
-        }
-    })
-
-# Optional: Save doclist as JSON
-with open(os.path.join(output_dir, "doclist.json"), "w") as f:
-    json.dump(doclist, f, indent=2)
-
-print(f"Generated {len(doclist)} doc chunks in '{output_dir}' folder.")
+# Optionally: Return doclist as a list of strings for embedding
+# You can now pass `doclist` to an embedding pipeline like OpenAI, BGE, etc.
