@@ -1,62 +1,82 @@
 import pandas as pd
-from collections import defaultdict
+import os
+import json
 
-# Load your Excel files
-dimension_df = pd.read_excel("dimensioning_flavour.xlsx")
-pod_df = pd.read_excel("pod_flavour.xlsx")
+# Load Excel files
+dimensioning_df = pd.read_excel("dimensioning_flavour_sheet.xlsx")
+pod_df = pd.read_excel("pod_flavour_sheet.xlsx")
 
-# Normalize column names just in case
-dimension_df.columns = dimension_df.columns.str.strip().str.lower()
+# Normalize column names (optional, just in case)
+dimensioning_df.columns = dimensioning_df.columns.str.strip().str.lower()
 pod_df.columns = pod_df.columns.str.strip().str.lower()
 
-# Initialize doclist
+# Create output folder
+output_dir = "rag_doclist"
+os.makedirs(output_dir, exist_ok=True)
+
 doclist = []
 
-# Iterate over each row in the dimensioning sheet
-for idx, row in dimension_df.iterrows():
-    operator = row['operator']
-    network_function = row['network function']
-    package = row['package']
-    
-    # Extract component requirements
-    components = ['dpp', 'dip', 'dmp', 'cmp', 'pmp', 'rmp', 'ipp']
-    component_details = "\n".join([f"- {comp.upper()}: {row[comp]}" for comp in components if comp in row])
-    
-    # Find matching PODs using the package field
-    matching_pods = pod_df[pod_df['package'] == package]
+# Loop over each row in dimensioning sheet
+for _, dim_row in dimensioning_df.iterrows():
+    operator = dim_row["operator"]
+    network_function = dim_row["network function"]
+    package = dim_row["dimensioning-flavour package"]
 
-    # Format matching PODs
-    pod_details = ""
-    for i, pod_row in matching_pods.iterrows():
-        pod_details += f"""
-{len(pod_details.splitlines()) // 8 + 1}. POD Name: {pod_row['postoperative']}
-   POD Flavour: {pod_row['podflavour']}
-   vCPU Request: {pod_row['vcpurequest']}
-   vCPU Limit: {pod_row['vcpulimit']}
-   Memory: {pod_row['vmemory']}
-   Hugepages: {pod_row.get('hugepage', 'N/A')}
-   Persistent Volume: {pod_row.get('persistentvolume', 'N/A')}
+    # Filter relevant PODs for this package
+    related_pods = pod_df[pod_df["package"] == package]
+
+    # Build dimensioning section
+    dim_section = "\n".join([
+        f"- DPP: {dim_row['dpp']}",
+        f"- DIP: {dim_row['dip']}",
+        f"- DMP: {dim_row['dmp']}",
+        f"- CMP: {dim_row['cmp']}",
+        f"- PMP: {dim_row['pmp']}",
+        f"- RMP: {dim_row['rmp']}",
+        f"- IPP: {dim_row['ipp']}",
+    ])
+
+    # Build POD section
+    pod_section = ""
+    for idx, pod in related_pods.iterrows():
+        pod_section += f"""
+{idx+1}. Type: {pod['pod type']}
+   vCPU Request: {pod['vcpurequest(vcore)']}
+   vCPU Limit: {pod['vcpulimit(vcore)']}
+   Memory: {pod['vmemory(gb)']} GB
+   HugePage: {pod['hugepage(gb)']} GB
+   Persistent Volume: {pod['persistentvolume(gb)']} GB
 """
 
-    # Compose final chunk
-    chunk_text = f"""Operator: {operator}
+    # Final doc string
+    doc = f"""Operator: {operator}
 Network Function: {network_function}
-Dimensioning Flavour Package: {package}
+Package/Flavour: {package}
 
-Package Requirements:
-{component_details}
+Dimensioning Components:
+{dim_section}
 
-PODs Using This Flavour:
-{pod_details.strip()}
-
-Note: This flavour is used in the {network_function} function by {operator} and shared across the above PODs.
+Associated PODs:{pod_section if pod_section else " None"}
 """
 
-    # Append to doclist
+    # Save as text file (optional)
+    filename = f"{operator}_{network_function}_{package}.txt".replace(" ", "_").lower()
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "w") as f:
+        f.write(doc)
+
+    # Add to doclist for embedding
     doclist.append({
-        "id": f"{operator}_{network_function}_{package}".lower().replace(" ", "_"),
-        "text": chunk_text
+        "content": doc,
+        "metadata": {
+            "operator": operator,
+            "network_function": network_function,
+            "package": package
+        }
     })
 
-# Save to CSV or JSON
-pd.DataFrame(doclist).to_csv("rag_doclist.csv", index=False)
+# Optional: Save doclist as JSON
+with open(os.path.join(output_dir, "doclist.json"), "w") as f:
+    json.dump(doclist, f, indent=2)
+
+print(f"Generated {len(doclist)} doc chunks in '{output_dir}' folder.")
